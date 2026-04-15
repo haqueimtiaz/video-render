@@ -16,12 +16,15 @@ app.post("/render", async (req, res) => {
     }
 
     const tempDir = path.join(__dirname, "frames");
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+    fs.mkdirSync(tempDir);
 
     // Download images
     for (let i = 0; i < frames.length; i++) {
       const url = frames[i];
-      const filePath = path.join(tempDir, `frame${i}.png`);
 
       const response = await axios({
         url,
@@ -29,20 +32,21 @@ app.post("/render", async (req, res) => {
         responseType: "arraybuffer",
       });
 
-      fs.writeFileSync(filePath, response.data);
+      fs.writeFileSync(`${tempDir}/frame${i}.png`, response.data);
     }
 
     const output = path.join(__dirname, "output.mp4");
 
-    // FFmpeg command
+    // FIXED FFmpeg COMMAND (important)
     const cmd = `
-    ffmpeg -y -framerate 1 -i ${tempDir}/frame%d.png \
-    -c:v libx264 -r 30 -pix_fmt yuv420p ${output}
+    ffmpeg -y -loop 1 -t 5 -i ${tempDir}/frame0.png \
+    -vf "scale=1080:1920,format=yuv420p" \
+    -c:v libx264 -pix_fmt yuv420p ${output}
     `;
 
     exec(cmd, (err) => {
       if (err) {
-        console.log(err);
+        console.log("FFmpeg error:", err);
         return res.status(500).send("FFmpeg failed");
       }
 
@@ -52,7 +56,7 @@ app.post("/render", async (req, res) => {
     });
 
   } catch (err) {
-    console.log(err);
+    console.log("Server error:", err);
     res.status(500).send("Server error");
   }
 });
@@ -62,4 +66,4 @@ app.get("/", (req,res)=>{
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("Server running on port " + PORT));
+app.listen(PORT, () => console.log("Server running"));
