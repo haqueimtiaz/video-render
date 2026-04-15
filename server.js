@@ -1,94 +1,86 @@
 const express = require("express");
-const axios = require("axios");
 const fs = require("fs");
-const { execSync } = require("child_process");
+const { exec } = require("child_process");
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
 
 app.get("/", (req, res) => {
   res.send("Video renderer running");
 });
 
-/***********************
-VIDEO RENDER API
-************************/
 app.post("/render", async (req, res) => {
   try {
     const { image, audio } = req.body;
 
-    if (!image) return res.status(400).send("No image");
-
-    const imgPath = "/tmp/frame.png";
-    fs.writeFileSync(imgPath, Buffer.from(image, "base64"));
-
-    let audioFiles = [];
-
-    // 🔊 DOWNLOAD AUDIO FILES
-    if (audio && audio.length > 0) {
-      for (let i = 0; i < audio.length; i++) {
-        const path = `/tmp/audio${i}.mp3`;
-
-        const response = await axios.get(audio[i], {
-          responseType: "arraybuffer"
-        });
-
-        fs.writeFileSync(path, response.data);
-        audioFiles.push(path);
-      }
+    if (!image || !audio || audio.length === 0) {
+      return res.status(400).send("Missing image or audio");
     }
 
-    // 🎬 CREATE VIDEO SEGMENTS
-    let segmentFiles = [];
+    // save image
+    const imagePath = "image.png";
+    fs.writeFileSync(imagePath, Buffer.from(image, "base64"));
 
-    for (let i = 0; i < audioFiles.length; i++) {
+    // download audio files
+    const audioFiles = [];
 
-      const segment = `/tmp/seg${i}.mp4`;
-
-      const cmd = `
-ffmpeg -y -loop 1 -i ${imgPath} -i ${audioFiles[i]} \
--c:v libx264 -tune stillimage \
--c:a aac -b:a 192k \
--shortest \
--vf "zoompan=z='min(zoom+0.002,1.2)':d=125,scale=720:1280" \
-${segment}
-`;
-
-      execSync(cmd);
-      segmentFiles.push(segment);
+    for (let i = 0; i < audio.length; i++) {
+      const path = `audio${i}.mp3`;
+      await download(audio[i], path);
+      audioFiles.push(path);
     }
 
-    // 🔗 CONCAT FILE
-    const listFile = "/tmp/list.txt";
+    // create list file for ffmpeg
+    const listFile = "list.txt";
     fs.writeFileSync(
       listFile,
-      segmentFiles.map(f => `file '${f}'`).join("\n")
+      audioFiles.map(f => `file '${f}'`).join("\n")
     );
 
-    const output = "/tmp/output.mp4";
+    // merge audio
+    await run(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy output.mp3`);
 
-    execSync(`
-ffmpeg -y -f concat -safe 0 -i ${listFile} -c copy ${output}
-`);
+    // create video
+    await run(`
+      ffmpeg -y -loop 1 -i image.png -i output.mp3 \
+      -c:v libx264 -tune stillimage \
+      -c:a aac -b:a 192k \
+      -pix_fmt yuv420p -shortest output.mp4
+    `);
 
-    const video = fs.readFileSync(output);
+    const video = fs.readFileSync("output.mp4");
 
     res.setHeader("Content-Type", "video/mp4");
     res.send(video);
-
-    // 🧹 CLEANUP
-    [...audioFiles, ...segmentFiles, imgPath, listFile, output]
-      .forEach(f => { if (fs.existsSync(f)) fs.unlinkSync(f); });
 
   } catch (err) {
     console.error(err);
     res.status(500).send("Error rendering video");
   }
 });
-/***********************
-START SERVER
-************************/
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
-});
+
+// helpers
+function run(cmd) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function download(url, path) {
+  const https = require("https");
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(path);
+    https.get(url, (res) => {
+      res.pipe(file);
+      file.on("finish", () => {
+        file.close(resolve);
+      });
+    }).on("error", reject);
+  });
+}
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log("Server running"));
