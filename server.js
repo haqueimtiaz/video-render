@@ -21,11 +21,12 @@ fs.writeFileSync(`frame${i}.png`, Buffer.from(buffer));
 
 ffmpeg()
 .input('frame%d.png')
-.inputFPS(1)
+.inputOptions(['-framerate 1'])
 .outputOptions([
 '-c:v libx264',
+'-r 30',
 '-pix_fmt yuv420p',
-'-r 30'
+'-vf scale=1080:1920'
 ])
 .save('output.mp4')
 .on('end', () => {
@@ -33,6 +34,10 @@ ffmpeg()
 const video = fs.readFileSync('output.mp4');
 res.send(video);
 
+})
+.on('error', (err)=>{
+console.log(err);
+res.status(500).send("Error rendering video");
 });
 
 });
