@@ -1,69 +1,75 @@
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
-const { exec } = require("child_process");
 const axios = require("axios");
+const fs = require("fs");
+const { execSync } = require("child_process");
 
 const app = express();
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.send("Video renderer running");
+});
+
+/***********************
+VIDEO RENDER API
+************************/
 app.post("/render", async (req, res) => {
   try {
-    const frames = req.body.frames;
+    const { frames } = req.body;
 
     if (!frames || frames.length === 0) {
       return res.status(400).send("No frames provided");
     }
 
-    const tempDir = path.join(__dirname, "frames");
+    const tempFiles = [];
 
-    if (fs.existsSync(tempDir)) {
-      fs.rmSync(tempDir, { recursive: true });
-    }
-    fs.mkdirSync(tempDir);
-
-    // Download images
+    // 🔽 DOWNLOAD IMAGES
     for (let i = 0; i < frames.length; i++) {
       const url = frames[i];
 
-      const response = await axios({
-        url,
-        method: "GET",
+      const filePath = `/tmp/frame${i}.png`;
+
+      const response = await axios.get(url, {
         responseType: "arraybuffer",
       });
 
-      fs.writeFileSync(`${tempDir}/frame${i}.png`, response.data);
+      fs.writeFileSync(filePath, response.data);
+      tempFiles.push(filePath);
     }
 
-    const output = path.join(__dirname, "output.mp4");
+    // 🔽 CREATE VIDEO USING FFMPEG
+    const output = `/tmp/output.mp4`;
 
-    // FIXED FFmpeg COMMAND (important)
-    const cmd = `
-    ffmpeg -y -loop 1 -t 5 -i ${tempDir}/frame0.png \
-    -vf "scale=1080:1920,format=yuv420p" \
-    -c:v libx264 -pix_fmt yuv420p ${output}
-    `;
+    const command = `
+ffmpeg -y -framerate 1 \
+-i /tmp/frame%d.png \
+-c:v libx264 \
+-pix_fmt yuv420p \
+-vf "scale=720:1280,format=yuv420p" \
+${output}
+`;
 
-    exec(cmd, (err) => {
-      if (err) {
-        console.log("FFmpeg error:", err);
-        return res.status(500).send("FFmpeg failed");
-      }
+    execSync(command);
 
-      const video = fs.readFileSync(output);
-      res.set("Content-Type", "video/mp4");
-      res.send(video);
-    });
+    const videoBuffer = fs.readFileSync(output);
+
+    res.setHeader("Content-Type", "video/mp4");
+    res.send(videoBuffer);
+
+    // 🔽 CLEANUP
+    tempFiles.forEach(f => fs.unlinkSync(f));
+    fs.unlinkSync(output);
 
   } catch (err) {
-    console.log("Server error:", err);
-    res.status(500).send("Server error");
+    console.error(err);
+    res.status(500).send("Error rendering video");
   }
 });
 
-app.get("/", (req,res)=>{
-  res.send("Video renderer running");
+/***********************
+START SERVER
+************************/
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
 });
-
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("Server running"));
