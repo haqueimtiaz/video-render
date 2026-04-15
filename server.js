@@ -8,13 +8,19 @@ app.use(express.json());
 
 app.post("/render", async (req, res) => {
 
+try {
+
 const frames = req.body.frames;
 
 for(let i=0;i<frames.length;i++){
 
 const response = await fetch(frames[i]);
-const buffer = await response.arrayBuffer();
 
+if(!response.ok){
+throw new Error("Image fetch failed: " + frames[i]);
+}
+
+const buffer = await response.arrayBuffer();
 fs.writeFileSync(`frame${i}.png`, Buffer.from(buffer));
 
 }
@@ -36,9 +42,14 @@ res.send(video);
 
 })
 .on('error', (err)=>{
-console.log(err);
+console.log("FFMPEG ERROR:", err);
 res.status(500).send("Error rendering video");
 });
+
+} catch(err){
+console.log("SERVER ERROR:", err);
+res.status(500).send("Server error");
+}
 
 });
 
