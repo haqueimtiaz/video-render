@@ -2,10 +2,8 @@
   "name": "video-render",
   "version": "1.0.0",
   "main": "server.js",
-  "type": "module",
   "dependencies": {
     "express": "^4.18.2",
-    "fluent-ffmpeg": "^2.1.2",
-    "node-fetch": "^3.3.2"
+    "axios": "^1.6.0"
   }
 }
