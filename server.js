@@ -15,37 +15,25 @@ VIDEO RENDER API
 ************************/
 app.post("/render", async (req, res) => {
   try {
-    const { frames } = req.body;
+    const { image } = req.body;
 
-    if (!frames || frames.length === 0) {
-      return res.status(400).send("No frames provided");
+    if (!image) {
+      return res.status(400).send("No image provided");
     }
 
-    const tempFiles = [];
+    const imagePath = "/tmp/frame0.png";
+    const buffer = Buffer.from(image, "base64");
 
-    // 🔽 DOWNLOAD IMAGES
-    for (let i = 0; i < frames.length; i++) {
-      const url = frames[i];
+    fs.writeFileSync(imagePath, buffer);
 
-      const filePath = `/tmp/frame${i}.png`;
-
-      const response = await axios.get(url, {
-        responseType: "arraybuffer",
-      });
-
-      fs.writeFileSync(filePath, response.data);
-      tempFiles.push(filePath);
-    }
-
-    // 🔽 CREATE VIDEO USING FFMPEG
-    const output = `/tmp/output.mp4`;
+    const output = "/tmp/output.mp4";
 
     const command = `
-ffmpeg -y -framerate 1 \
--i /tmp/frame%d.png \
+ffmpeg -y -loop 1 -i ${imagePath} \
 -c:v libx264 \
+-t 5 \
 -pix_fmt yuv420p \
--vf "scale=720:1280,format=yuv420p" \
+-vf "scale=720:1280" \
 ${output}
 `;
 
@@ -56,8 +44,7 @@ ${output}
     res.setHeader("Content-Type", "video/mp4");
     res.send(videoBuffer);
 
-    // 🔽 CLEANUP
-    tempFiles.forEach(f => fs.unlinkSync(f));
+    fs.unlinkSync(imagePath);
     fs.unlinkSync(output);
 
   } catch (err) {
