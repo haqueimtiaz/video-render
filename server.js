@@ -4,70 +4,79 @@ const { exec } = require("child_process");
 const https = require("https");
 
 const app = express();
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: "100mb" }));
 
 app.get("/", (req, res) => {
-  res.send("Video renderer running");
+  res.send("🚀 Video renderer running");
 });
 
+
+/*************************
+RENDER VIDEO (MULTI SCENE)
+*************************/
 app.post("/render", async (req, res) => {
   try {
-    const { image, audio } = req.body;
+    const { images, audio } = req.body;
 
-    if (!image || !audio || audio.length === 0) {
-      return res.status(400).send("Missing image or audio");
+    if (!images || !audio || images.length === 0) {
+      return res.status(400).send("Missing images or audio");
     }
 
-    // 🖼️ Save image
-    const imagePath = "image.png";
-    fs.writeFileSync(imagePath, Buffer.from(image, "base64"));
+    let segments = [];
 
-    // 🔊 Download audio files
-    const audioFiles = [];
+    for (let i = 0; i < images.length; i++) {
 
-    for (let i = 0; i < audio.length; i++) {
-      const path = `audio${i}.mp3`;
-      await download(audio[i], path);
-      audioFiles.push(path);
+      const imgPath = `img${i}.png`;
+      const audioPath = `aud${i}.mp3`;
+      const output = `seg${i}.mp4`;
+
+      // 🖼 Save image
+      fs.writeFileSync(imgPath, Buffer.from(images[i], "base64"));
+
+      // 🔊 Download audio
+      await download(audio[i], audioPath);
+
+      // 🎬 Create animated video segment (ZOOM EFFECT)
+      await run(`
+        ffmpeg -y -loop 1 -i ${imgPath} -i ${audioPath} \
+        -vf "zoompan=z='min(zoom+0.002,1.3)':d=125,scale=1080:1920" \
+        -c:v libx264 -tune stillimage \
+        -c:a aac -b:a 192k \
+        -pix_fmt yuv420p -shortest ${output}
+      `);
+
+      segments.push(output);
     }
 
-    // 📄 Create list file for FFmpeg
-    const listFile = "list.txt";
+    // 📄 Create list file for merging
     fs.writeFileSync(
-      listFile,
-      audioFiles.map(f => `file '${f}'`).join("\n")
+      "list.txt",
+      segments.map(f => `file '${f}'`).join("\n")
     );
 
-    // 🔊 Merge audio
-    await run(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy output.mp3`);
+    // 🔗 Merge all segments
+    await run(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy final.mp4`);
 
-    // 🎬 CREATE SHORTS VIDEO (VERTICAL)
-    await run(`
-      ffmpeg -y -loop 1 -i image.png -i output.mp3 \
-      -vf "scale=1080:-1,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p" \
-      -c:v libx264 -tune stillimage \
-      -c:a aac -b:a 192k \
-      -shortest -r 30 output.mp4
-    `);
-
-    // 📦 Read video
-    const video = fs.readFileSync("output.mp4");
+    const video = fs.readFileSync("final.mp4");
 
     res.setHeader("Content-Type", "video/mp4");
     res.send(video);
 
   } catch (err) {
-    console.error(err);
+    console.error("❌ RENDER ERROR:", err);
     res.status(500).send("Error rendering video");
   }
 });
 
-// 🔧 Run shell command
+
+/*************************
+HELPER: RUN COMMAND
+*************************/
 function run(cmd) {
   return new Promise((resolve, reject) => {
     exec(cmd, (err, stdout, stderr) => {
       if (err) {
-        console.error(stderr);
+        console.error("FFMPEG ERROR:", stderr);
         reject(err);
       } else {
         resolve(stdout);
@@ -76,20 +85,29 @@ function run(cmd) {
   });
 }
 
-// 🔽 Download helper
+
+/*************************
+HELPER: DOWNLOAD AUDIO
+*************************/
 function download(url, path) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(path);
+
     https.get(url, (res) => {
       res.pipe(file);
       file.on("finish", () => {
         file.close(resolve);
       });
     }).on("error", (err) => {
-      fs.unlink(path, () => reject(err));
+      fs.unlink(path, () => {});
+      reject(err);
     });
   });
 }
 
+
+/*************************
+START SERVER
+*************************/
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log("🚀 Server running on port " + PORT));
