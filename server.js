@@ -1,6 +1,7 @@
 const express = require("express");
 const fs = require("fs");
 const { exec } = require("child_process");
+const https = require("https");
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
@@ -17,11 +18,11 @@ app.post("/render", async (req, res) => {
       return res.status(400).send("Missing image or audio");
     }
 
-    // save image
+    // 🖼️ Save image
     const imagePath = "image.png";
     fs.writeFileSync(imagePath, Buffer.from(image, "base64"));
 
-    // download audio files
+    // 🔊 Download audio files
     const audioFiles = [];
 
     for (let i = 0; i < audio.length; i++) {
@@ -30,24 +31,26 @@ app.post("/render", async (req, res) => {
       audioFiles.push(path);
     }
 
-    // create list file for ffmpeg
+    // 📄 Create list file for FFmpeg
     const listFile = "list.txt";
     fs.writeFileSync(
       listFile,
       audioFiles.map(f => `file '${f}'`).join("\n")
     );
 
-    // merge audio
+    // 🔊 Merge audio
     await run(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy output.mp3`);
 
-    // create video
+    // 🎬 CREATE SHORTS VIDEO (VERTICAL)
     await run(`
       ffmpeg -y -loop 1 -i image.png -i output.mp3 \
+      -vf "scale=1080:-1,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p" \
       -c:v libx264 -tune stillimage \
       -c:a aac -b:a 192k \
-      -pix_fmt yuv420p -shortest output.mp4
+      -shortest -r 30 output.mp4
     `);
 
+    // 📦 Read video
     const video = fs.readFileSync("output.mp4");
 
     res.setHeader("Content-Type", "video/mp4");
@@ -59,18 +62,22 @@ app.post("/render", async (req, res) => {
   }
 });
 
-// helpers
+// 🔧 Run shell command
 function run(cmd) {
   return new Promise((resolve, reject) => {
-    exec(cmd, (err) => {
-      if (err) reject(err);
-      else resolve();
+    exec(cmd, (err, stdout, stderr) => {
+      if (err) {
+        console.error(stderr);
+        reject(err);
+      } else {
+        resolve(stdout);
+      }
     });
   });
 }
 
+// 🔽 Download helper
 function download(url, path) {
-  const https = require("https");
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(path);
     https.get(url, (res) => {
@@ -78,9 +85,11 @@ function download(url, path) {
       file.on("finish", () => {
         file.close(resolve);
       });
-    }).on("error", reject);
+    }).on("error", (err) => {
+      fs.unlink(path, () => reject(err));
+    });
   });
 }
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("Server running"));
+app.listen(PORT, () => console.log("🚀 Server running on port " + PORT));
