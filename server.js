@@ -4,110 +4,82 @@ const { exec } = require("child_process");
 const https = require("https");
 
 const app = express();
-app.use(express.json({ limit: "100mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 app.get("/", (req, res) => {
-  res.send("🚀 Video renderer running");
+  res.send("Video renderer running");
 });
 
-
-/*************************
-RENDER VIDEO (MULTI SCENE)
-*************************/
 app.post("/render", async (req, res) => {
   try {
     const { images, audio } = req.body;
 
-    if (!images || !audio || images.length === 0) {
+    // ✅ strict validation
+    if (!images || images.length === 0 || !audio || audio.length === 0 || audio.some(a => !a)) {
       return res.status(400).send("Missing images or audio");
     }
 
-    let segments = [];
+    // save first image
+    const imagePath = "image.png";
+    fs.writeFileSync(imagePath, Buffer.from(images[0], "base64"));
 
-    for (let i = 0; i < images.length; i++) {
+    // download audio files
+    const audioFiles = [];
 
-      const imgPath = `img${i}.png`;
-      const audioPath = `aud${i}.mp3`;
-      const output = `seg${i}.mp4`;
-
-      // 🖼 Save image
-      fs.writeFileSync(imgPath, Buffer.from(images[i], "base64"));
-
-      // 🔊 Download audio
-      await download(audio[i], audioPath);
-
-      // 🎬 Create animated video segment (ZOOM EFFECT)
-      await run(`
-        ffmpeg -y -loop 1 -i ${imgPath} -i ${audioPath} \
-        -vf "zoompan=z='min(zoom+0.002,1.3)':d=125,scale=1080:1920" \
-        -c:v libx264 -tune stillimage \
-        -c:a aac -b:a 192k \
-        -pix_fmt yuv420p -shortest ${output}
-      `);
-
-      segments.push(output);
+    for (let i = 0; i < audio.length; i++) {
+      const path = `audio${i}.mp3`;
+      await download(audio[i], path);
+      audioFiles.push(path);
     }
 
-    // 📄 Create list file for merging
+    // create list file
     fs.writeFileSync(
       "list.txt",
-      segments.map(f => `file '${f}'`).join("\n")
+      audioFiles.map(f => `file '${f}'`).join("\n")
     );
 
-    // 🔗 Merge all segments
-    await run(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy final.mp4`);
+    // merge audio
+    await run(`ffmpeg -y -f concat -safe 0 -i list.txt -c copy output.mp3`);
 
-    const video = fs.readFileSync("final.mp4");
+    // create vertical short video (9:16)
+    await run(`
+      ffmpeg -y -loop 1 -i image.png -i output.mp3 \
+      -vf "scale=1080:1920,format=yuv420p" \
+      -c:v libx264 -preset veryfast \
+      -c:a aac -b:a 192k \
+      -shortest output.mp4
+    `);
+
+    const video = fs.readFileSync("output.mp4");
 
     res.setHeader("Content-Type", "video/mp4");
     res.send(video);
 
   } catch (err) {
-    console.error("❌ RENDER ERROR:", err);
-    res.status(500).send("Error rendering video");
+    console.error(err);
+    res.status(500).send("Render failed: " + err.message);
   }
 });
 
-
-/*************************
-HELPER: RUN COMMAND
-*************************/
+// helpers
 function run(cmd) {
   return new Promise((resolve, reject) => {
-    exec(cmd, (err, stdout, stderr) => {
-      if (err) {
-        console.error("FFMPEG ERROR:", stderr);
-        reject(err);
-      } else {
-        resolve(stdout);
-      }
+    exec(cmd, (err) => {
+      if (err) reject(err);
+      else resolve();
     });
   });
 }
 
-
-/*************************
-HELPER: DOWNLOAD AUDIO
-*************************/
 function download(url, path) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(path);
-
     https.get(url, (res) => {
       res.pipe(file);
-      file.on("finish", () => {
-        file.close(resolve);
-      });
-    }).on("error", (err) => {
-      fs.unlink(path, () => {});
-      reject(err);
-    });
+      file.on("finish", () => file.close(resolve));
+    }).on("error", reject);
   });
 }
 
-
-/*************************
-START SERVER
-*************************/
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log("🚀 Server running on port " + PORT));
+app.listen(PORT, () => console.log("Server running"));
